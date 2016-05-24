@@ -27,12 +27,15 @@ from openerp.osv import orm, fields
 from openerp.tools import DEFAULT_SERVER_DATETIME_FORMAT
 from openerp.tools.translate import _
 
-from .job import STATES, DONE, PENDING, OpenERPJobStorage
+from .job import STATES, DONE, FAILED, PENDING, OpenERPJobStorage
 from .worker import WORKER_TIMEOUT
 from ..session import ConnectorSession
 from .worker import watcher
 
 _logger = logging.getLogger(__name__)
+
+# it's potentially much much faster to issue queries with IN than with NOT IN
+FINISHED_STATES = tuple(st[0] for st in STATES if st[0] not in (DONE, FAILED))
 
 
 class QueueJob(orm.Model):
@@ -281,7 +284,7 @@ class QueueWorker(orm.Model):
     def _assign_jobs(self, cr, uid, max_jobs=None, context=None):
         sql = ("SELECT id FROM queue_job "
                "WHERE worker_id IS NULL "
-               "AND state not in ('failed', 'done') "
+               "AND state IN %s "
                "AND active = true "
                "ORDER BY eta NULLS LAST, priority, date_created ")
         if max_jobs is not None:
@@ -293,7 +296,7 @@ class QueueWorker(orm.Model):
         worker = watcher.worker_for_db(cr.dbname)
         cr.execute("SAVEPOINT queue_assign_jobs")
         try:
-            cr.execute(sql, log_exceptions=False)
+            cr.execute(sql, [FINISHED_STATES], log_exceptions=False)
         except Exception:
             # Here it's likely that the FOR UPDATE NOWAIT failed to get the LOCK,
             # so we ROLLBACK to the SAVEPOINT to restore the transaction to its earlier
