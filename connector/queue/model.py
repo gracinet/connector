@@ -228,6 +228,9 @@ class QueueWorker(orm.Model):
         assert worker
         worker_ids = self.search(cr, uid, [('uuid', '=', worker.uuid)],
                                  context=context)
+        if not worker_ids:
+            raise LookupError("Worker uuid=%r not registered in database")
+
         assert len(worker_ids) == 1, ("%s worker found in database instead "
                                       "of 1" % len(worker_ids))
         return worker_ids[0]
@@ -310,7 +313,14 @@ class QueueWorker(orm.Model):
             return
         job_ids = [id for id, in job_rows]
 
-        worker_id = self._worker_id(cr, uid, context=context)
+        try:
+            worker_id = self._worker_id(cr, uid, context=context)
+        except LookupError as exc:
+            _logger.warn(str(exc) +
+                         "This can happen right after startup, but "
+                         "if this happens permanently, no job can be "
+                         "assigned to it")
+            return
         _logger.debug('Assign %d jobs to worker %s', len(job_ids),
                       worker.uuid)
         # ready to be enqueued in the worker
